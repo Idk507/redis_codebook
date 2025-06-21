@@ -1,26 +1,24 @@
-from fastapi import FastAPI
-from redis import Redis
-import time
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, HttpUrl
+import shortuuid
+from redis_db import redis
 
 app = FastAPI()
 
-# Connect to Redis (default port is 6379)
-redis_client = Redis(host='localhost', port=6379, decode_responses=True)
+class URLRequest(BaseModel):
+    long_url: HttpUrl
 
-@app.get("/expensive-computation")
-def expensive_computation():
-    cache_key = "expensive_result"
+BASE_HOST = "http://short.ly/"  # Base domain for short URLs
 
-    # Check Redis cache
-    cached_result = redis_client.get(cache_key)
-    if cached_result:
-        return {"result": cached_result, "source": "cache"}
+@app.post("/shorten")
+def shorten_url(request: URLRequest):
+    short_code = shortuuid.uuid()[:6]  # 6-char unique ID
+    redis.set(short_code, request.long_url)
+    return {"short_url": BASE_HOST + short_code}
 
-    # Simulate long-running process
-    time.sleep(5)
-    result = "Expensive result at " + time.strftime("%X")
-
-    # Store in Redis with a timeout (TTL of 10 seconds)
-    redis_client.setex(cache_key, 10, result)
-
-    return {"result": result, "source": "calculated"}
+@app.get("/{short_code}")
+def redirect_to_long_url(short_code: str):
+    long_url = redis.get(short_code)
+    if not long_url:
+        raise HTTPException(status_code=404, detail="URL not found")
+    return {"original_url": long_url}
